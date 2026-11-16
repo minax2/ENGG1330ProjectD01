@@ -105,6 +105,20 @@ Output: Claude gave me a diagram of the game structure, and also a timeline for 
 - What we kept, changed or rejected: We rejected it as it didn’t seem natural, and the game was quite simple enough that we didn’t need a diagram for it.
 - How we checked it; tests and corrections: We took a look at it and thought that it is quite a little bit extreme and isn’t that necessary.
 
+## Entry 9
+
+- Member and date: Siranat 16 Nov 2026
+- Tool and model/version, where available: Claude Opus 5.5
+- Purpose: Fixing terminal sizing problem.
+- Relevant prompts and outputs used, or retained transcript location: 
+Prompt: Right now when the terminal is smaller than 80x24 the game doesn't start when you run the command, which is correct, but after resizing it it to be big enough, the terminal got bricked, even pressing ctrl+c doesn't kill the python command. Could you make it so that player get an option to either quit the game so the code stop itself and make it so that if the terminal size is adequate make the game continue immediately.
+Output: Claude gave me functions to get the current terminal size, and functions to send a message when the terminal is too small and keep checking if thet terminal is big enough or not if it is, show the game.
+ - Files/materials affected: main.py
+- What we kept, changed or rejected: We kept the functions claude gave us to fix the terminal sizing problem
+- How we checked it; tests and corrections: We ran the game again this time starting with terminal too small, the game doesn't start with it, you can press q to quit or fix the terminal size and the game would pop up.
+
+
+
 
 Keep evidence accessible to the teaching team. Remove credentials and unrelated personal information. Submit the completed file as `ai_use.md` with the project.
 
