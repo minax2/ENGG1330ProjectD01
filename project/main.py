@@ -712,9 +712,9 @@ START_MINUTES = 21 * 60      #9:00 PM
 HOME_MINUTES = 22 * 60 + 30  #10:30 PM
 SEARCH_MINUTES = 9           #10 spots x 9 minutes = home at 10:30, so you can search them all
 SHOW_LIMIT = 6               #how many clues you can show them in act 2
-CONFESS_AT = 6
-PARANOIA_MAX = 6
-METER_SIZE = 10
+CONFESS_AT = 6               #threshold for guilt at the act two part of the game
+PARANOIA_MAX = 6             #maximum paranoia before the partner storm out
+METER_SIZE = 10              #the bar size, each a paranoia and guilt fills up about 1.67 block of the meter.
 
 class BackToMenu(Exception):
     pass
