@@ -5,12 +5,23 @@ README
 Names: Ayumi Seki, Nguyen Trong Anh Minh
 Subclass: D
 Container version: Debian Linux 12 (Bookworm) (The provided docker container)
-Run command:  python main.py
+Run command:
+*You must have a docker desktop running.*
+1.Download the zip file
+2.Go to the directory via terminal, or preferably, open the folder in Visual Studio Code and open the terminal.
+3.Run "docker compose build" (only required on the first time)
+4.Run "docker compose run --rm game bash"
+5.Run "python main.py"
 Tests and known limitations: 
 
-Test: Played the game on both Windows and Mac terminal to ensure the graphics of the game still functions, even if they run on docker some of the graphics may change based on the OS. 
+Test: 
+-Played the game on both Windows and Mac terminal to ensure the graphics of the game still functions, even if they run on docker some of the graphics may change based on the OS. 
+-Tried running the game with inital terminal bigger than 80x24 and then minimize it later, found some bugs.
 
-Known Limitations: Doesn’t work on Windows terminal without docker, as two of the libraries used were tty and termios ( which are standard python libraries ), however it works fine within the provided docker.
+Known Limitations: 
+-Doesn’t work on Windows terminal without docker, as two of the libraries used were tty and termios ( which are standard python libraries ), however it works fine within the provided docker.
+-If you also run the game with initial terminal bigger than 80x24 and later minimize it, the game would still continue but the updated screen would be faulty, it will try to update the terminal as much as possible and when the items that should be in the bottom hit the bottom border, it will just keep updating even if it means overwriting the current texts at that position.
+
 
 Contributions: 
 Ayumi - First worked on the outline for act 2 of the game, where I wrote the dialogues for the player and the partner during the confrontation. Worked on re-designing the pixel arts for the background, items, and partner’s face since the AI generated ones were looking weird. The size didn’t match the terminal size and some of the items were unrecognizable. Also, I tidied up the codes and removed functions that were not necessary, such as those that were used to catch mistakes during testing, functions that were used only once and hence didn’t need to be functions, etc. For example, we had a check_size function and load_background function to check whether all the images were the right size (80x44 pixels) and stop the game if not. This was useful during testings, but after we were able to run the game without stopping, these were not necessary so I removed them to make the code cleaner. I also contributed by writing the explanations for each functions, which are used for the demo video.
