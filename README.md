@@ -2,9 +2,12 @@
 
 README
 
-Names: Ayumi Seki, Nguyen Trong Anh Minh
+Names: Ayumi Seki, Nguyen Trong Anh Minh, Siranat Phuthachai
+
 Subclass: D
+
 Container version: Debian Linux 12 (Bookworm) (The provided docker container)
+
 Run command:
 *You must have a docker desktop running.*
 
