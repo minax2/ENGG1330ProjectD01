@@ -1,4 +1,4 @@
-import os, sys, tty, termios, shutil, struct, zlib, random, textwrap, time, select
+import os, sys, tty, termios, struct, zlib, random, textwrap, time, select
 
 WIDTH, HEIGHT = 80, 24
 ART_H = 44
@@ -23,9 +23,12 @@ def paeth(a, b, c):
     return c
 
 
+HERE = os.path.dirname(os.path.abspath(__file__))   #the folder this file is in
+
 def load_png(filename):
     #returns a list of rows, each pixel is (r, g, b) or None if see-through
-    with open(filename, "rb") as f:
+    #filename is relative to this file's folder, so the game works from any folder
+    with open(os.path.join(HERE, filename), "rb") as f:
         data = f.read()
 
     pos = 8
@@ -161,6 +164,7 @@ def text_row(text, row):
     middle = colour(TEXT_BG, 48) + " " * pad
     used = 0
     for t, rgb in text:
+        t = t[:inner - used]   #cut anything too long, so it never spills past the frame
         middle += colour(rgb, 38) + t
         used += len(t)
     middle += " " * (inner - pad - used)
@@ -183,21 +187,90 @@ def bottom_row(hint):
 def wrap(text):
     return textwrap.wrap(text, WIDTH - 2 * SIDE - 4)
 
-def get_key():
-    ch = sys.stdin.read(1)
+def read_key():
+    #reads one key press straight from the keyboard (no waiting for Enter)
+    ch = os.read(sys.stdin.fileno(), 1).decode("latin-1")
+    if ch == "\x03":   #Ctrl+C still quits, even though the terminal is in raw mode
+        raise KeyboardInterrupt
     if ch in ("\r", "\n"):
         return "enter"
     return ch.lower()
 
-TYPE_SPEED = 0.01   #seconds per letter when text rolls out, 0 shows it all at once
-
 def key_waiting(seconds):
     #waits up to this long, True if a key was pressed in the meantime
-    ready, _, _ = select.select([sys.stdin], [], [], seconds)
+    ready, _, _ = select.select([sys.stdin.fileno()], [], [], seconds)
     return bool(ready)
+
+#size of the terminal window
+#the game only ever draws in the top-left 80x24, but it needs at least that much room
+SCREEN = None      #the last thing show() drew, so it can be drawn again after a resize
+LAST_SIZE = None   #terminal size when the screen was last drawn
+
+def terminal_size():
+    try:
+        #ask the terminal itself for its size (shutil can be fooled by COLUMNS/LINES settings)
+        cols, rows = os.get_terminal_size(sys.stdout.fileno())
+    except OSError:
+        return WIDTH, HEIGHT   #not a real terminal, so just assume it is big enough
+    return cols, rows
+
+def too_small_message(cols, rows):
+    #picks the longest message that fits in the space there is
+    messages = [f"Your terminal is {cols}x{rows}. Please make it at least {WIDTH}x{HEIGHT}. "
+                "The game is paused and carries on by itself once it fits. Press Q to quit.",
+                f"Too small ({cols}x{rows}). Make it at least {WIDTH}x{HEIGHT}. Q quits.",
+                f"Resize to {WIDTH}x{HEIGHT}",
+                f"{WIDTH}x{HEIGHT}"]
+    width = max(cols - 1, 1)   #stay off the last column so nothing wraps onto the next row
+    for message in messages:
+        lines = textwrap.wrap(message, width)
+        if len(lines) <= rows:
+            return lines
+    return textwrap.wrap(messages[-1], width)[:rows]   #tiny window: show what fits
+
+def wait_until_big_enough():
+    #pauses the game while the terminal is smaller than 80x24
+    #returns True if it had to pause
+    paused = False
+    shown = None
+    while True:
+        cols, rows = terminal_size()
+        if cols >= WIDTH and rows >= HEIGHT:
+            return paused
+        paused = True
+        if (cols, rows) != shown:   #only redraw the message when the size changes
+            #no new line after the last row, so the screen never scrolls
+            sys.stdout.write(RESET + CLEAR + "\r\n".join(too_small_message(cols, rows)))
+            sys.stdout.flush()
+            shown = (cols, rows)
+        if key_waiting(0.2) and read_key() == "q":
+            raise KeyboardInterrupt   #quit from the resize screen
+
+def check_size():
+    #pauses if the terminal got too small, and draws the screen again if its size changed
+    #returns True if the screen was drawn again
+    global LAST_SIZE
+    paused = wait_until_big_enough()
+    size = terminal_size()
+    if not paused and size == LAST_SIZE:
+        return False
+    LAST_SIZE = size
+    if SCREEN is not None:
+        draw(*SCREEN)
+    return True
+
+def get_key():
+    #waits for a key, keeping an eye on the terminal size while it waits
+    while True:
+        check_size()
+        if key_waiting(0.1):
+            return read_key()
+
+TYPE_SPEED = 0.02   #seconds per letter when text rolls out, 0 shows it all at once
 
 def type_out(lines, first_row):
     #rolls the text out one letter at a time, any key shows the rest straight away
+    #returns False if a key skipped it (the rest still needs writing)
     inner = WIDTH - 2 * SIDE
     for i, line in enumerate(lines):
         if isinstance(line, str):
@@ -206,42 +279,54 @@ def type_out(lines, first_row):
         col = SIDE + (inner - length) // 2
         #move the cursor to where this line starts (the terminal counts from 1)
         sys.stdout.write(f"\x1b[{first_row + i + 1};{col + 1}H" + colour(TEXT_BG, 48))
+        room = inner   #letters that still fit on this row
         for t, rgb in line:
             sys.stdout.write(colour(rgb, 38))
+            t = t[:room]
+            room -= len(t)
             for ch in t:
                 sys.stdout.write(ch)
                 sys.stdout.flush()
-                if ch != " " and key_waiting(TYPE_SPEED):
-                    get_key()      #use up the key so it doesn't also skip the page
+                if ch == " ":
+                    continue
+                if check_size():
+                    return True    #resized: the whole screen was drawn again, text and all
+                if key_waiting(TYPE_SPEED):
+                    read_key()     #use up the key so it doesn't also skip the page
                     return False
     return True
+
+def draw(picture, lines, hint):
+    #draws the whole 80x24 screen in one go
+    art = render_art(picture, HEIGHT - 1 - len(lines))
+    text = [text_row(line, len(art) + i) for i, line in enumerate(lines)]
+    #no new line after the bottom row, so the screen never scrolls
+    sys.stdout.write(RESET + CLEAR + "\r\n".join(art + text + [bottom_row(hint)]) + RESET)
+    sys.stdout.flush()
 
 def show(picture, lines, hint="", typing=False):
     #the picture fills whatever rows are left above the text
     #typing=True rolls the text out letter by letter
+    global SCREEN, LAST_SIZE
     if isinstance(lines, str):
         lines = [lines]
-    while True:
-        cols, rows = shutil.get_terminal_size()
-        if cols >= WIDTH and rows >= HEIGHT:
-            break
-        sys.stdout.write(RESET + CLEAR + f"Please make the terminal at least {WIDTH}x{HEIGHT}, "
-                         "then press any key.")
-        sys.stdout.flush()
-        get_key()
+    lines = lines[:HEIGHT - 1]   #never more text rows than fit above the bottom row
+    SCREEN = (picture, lines, hint)
+    wait_until_big_enough()
+    LAST_SIZE = terminal_size()
+    if not typing or TYPE_SPEED == 0:
+        draw(picture, lines, hint)
+        return
     art = render_art(picture, HEIGHT - 1 - len(lines))
     text = [text_row(line, len(art) + i) for i, line in enumerate(lines)]
-    if not typing or TYPE_SPEED == 0:
-        sys.stdout.write(CLEAR + "\r\n".join(art + text + [bottom_row(hint)]))
-        sys.stdout.flush()
-        return
     #draw everything with empty text rows first, then fill them in
     blank = [text_row("", len(art) + i) for i in range(len(lines))]
-    sys.stdout.write(CLEAR + "\r\n".join(art + blank + [bottom_row(hint)]))
+    sys.stdout.write(RESET + CLEAR + "\r\n".join(art + blank + [bottom_row(hint)]))
     sys.stdout.flush()
     if not type_out(lines, len(art)):
-        #skipped: redraw the finished screen
-        sys.stdout.write(CLEAR + "\r\n".join(art + text + [bottom_row(hint)]))
+        #skipped: write the finished text rows over the half-typed ones
+        #only the text rows are rewritten, so the picture is not cleared and redrawn
+        sys.stdout.write(RESET + f"\x1b[{len(art) + 1};1H" + "\r\n".join(text))
     sys.stdout.write(RESET)
     sys.stdout.flush()
 
@@ -345,8 +430,6 @@ AREAS = [
          "fits": {"affair", "surprise"},
          "find": "You find a designer tie hanging behind your winter coats. It definitely "
                  "isn't yours. There is a faint whiff of expensive cologne you've never smelled before.",
-         "more": ["Furthermore, they never wore such a nice tie in my sight ever."
-                 "What could possibly be such a special occasion for them?"],
          "say": "Care to explain why I found a designer silk tie behind the winter coats? "
                 "It's not mine, and it smells like a cologne I've never bought.",
          "replies": {
@@ -363,8 +446,6 @@ AREAS = [
                  "clipped to it. They said they badged in at 8 this morning.",
          "say": "Your office badge is hanging in the closet. How did you get into work today "
                 "without it?",
-        "more": ["Other than that, why does it seem to have a hole punched in it?"
-                "What happened to his office ID badge?"],
          "replies": {
             "jobless": ("nervous", 3, 0,
                         "They hesitate a beat too long. 'Security knows me, they just wave me "
@@ -398,7 +479,7 @@ AREAS = [
         {"evidence": "Gutted Photo Album", "short": "Photo album", "item": "album",
          "fits": {"surprise"},
          "find": "You pull out the photo album from your first year together. Half the photos "
-                 "have been taken out.",
+                 "have been carefully peeled out.",
          "say": "Somebody's been pulling photos out of our album. Our photos. What are you doing "
                 "with them?",
          "replies": {
@@ -422,8 +503,6 @@ AREAS = [
                  "strand. Neither you nor your partner has blonde hair.",
          "say": "Tucked right against the headboard, I found a long blonde hair strand. Neither "
                 "of us are blonde. Who was in our bed?",
-        "more": ["But last week, my sister came over, she had blonde hair."
-                        "It might not be good to jump the gun."],
          "replies": {
             "affair": ("angry", 1, 1,
                        "They cross their arms defensively. 'Are you serious? It's probably from a "
@@ -644,8 +723,8 @@ AREAS = [
         {"evidence": "Household Budget", "short": "Budget sheet", "item": "budget-sheet",
          "fits": {"debt", "jobless", "none"},
          "find": "The laptop is open to your household budget spreadsheet. Several totals are "
-                 "highlighted.",
-         "say": "Your laptop's open to our budget, and half of it is highlighted. What's "
+                 "highlighted in red.",
+         "say": "Your laptop's open to our budget, and half of it is highlighted in red. What's "
                 "going on with our money?",
          "replies": {
             "debt": ("nervous", 2, 0,
@@ -702,7 +781,7 @@ ITEMS = {}
 for area in AREAS:
     for clue in area["clues"]:
         path = f"art/items/{clue['item']}.png"
-        if os.path.exists(path):
+        if os.path.exists(os.path.join(HERE, path)):
             ITEMS[clue["item"]] = load_png(path)
 
 CLUE_CHANCE = 0.85           #chance a spot holds a clue to the real secret
@@ -711,10 +790,10 @@ MIN_TRACES = 6              #a real secret always leaves at least this many clue
 START_MINUTES = 21 * 60      #9:00 PM
 HOME_MINUTES = 22 * 60 + 30  #10:30 PM
 SEARCH_MINUTES = 9           #10 spots x 9 minutes = home at 10:30, so you can search them all
-SHOW_LIMIT = 6               #how many clues you can show them in act 2
-CONFESS_AT = 6               #threshold for guilt at the act two part of the game
-PARANOIA_MAX = 6             #maximum paranoia before the partner storm out
-METER_SIZE = 10              #the bar size, each a paranoia and guilt fills up about 1.67 block of the meter.
+SHOW_LIMIT = 4               #how many clues you can show them in act 2
+CONFESS_AT = 6
+PARANOIA_MAX = 6
+METER_SIZE = 10
 
 class BackToMenu(Exception):
     pass
@@ -805,14 +884,11 @@ def act_one(secret):
     press_on(LIVING_ROOM,
              ["It's 9:00 PM. Your phone buzzes. A text from your partner:",
               '"Working late again. Don\'t wait up."',
-              "That's the fifth time this week. Something isn't right."])
-    press_on(LIVING_ROOM,
-                 ["They've been acting weird lately, looking secretive",
-                  '"I saw them talking on the phone, messaging, a lot."',
-                  "Something isn't right, I must find out about this"])
+              "That's the third time this week. Something isn't right."])
     press_on(TITLES["act1"],
              [f"They'll be home at {clock(HOME_MINUTES)}. That's just enough time to search everything.",
-              f"Search the room and find out what's hidden.Later you can only show them {SHOW_LIMIT}.",
+              f"Search the bedroom and work out what they're hiding.",
+              f"Later you can only show them {SHOW_LIMIT}.",
               [("Another person? Money? Something else? Maybe nothing at all.", GREY)]])
 
     found = []
@@ -848,8 +924,6 @@ def act_one(secret):
                 press_on(closeup_picture(clue),
                          ["> " + area["action"]] + wrap(clue["find"]) +
                          [[("Evidence gained: ", GREY), ("[" + clue["evidence"] + "]", GOLD)]])
-                for page in clue.get("more", []):
-                    press_on(closeup_picture(clue), wrap(page))
 
     press_on(TITLES["1030"], ["You hear keys turning in the front door.", "They're home."])
     return found
@@ -868,7 +942,8 @@ def act_two(secret, found):
              [f"You found {len(found)} clues, but you can only show them {SHOW_LIMIT}. Choose well.",
               [("GUILT", RED), (" if it hits home, ", TEXT_FG), ("PARANOIA", BLUE),
                (" if it makes you look crazy.", TEXT_FG)],
-              f"Guilt {CONFESS_AT}+ and right guess make them crack. Full paranoia: they walk out."])
+              f"Guilt {CONFESS_AT}+ and the right accusation makes them crack.",
+              "Full paranoia: they walk out."])
 
     guilt = 0
     paranoia = 0
@@ -987,14 +1062,7 @@ def let_it_go(secret):
         truth += " Best ending!"
     ending(confront_picture("happy"), title, story, truth)
     return secret in ("none", "surprise")
-EPILOGUES = {
-    "affair":   "You didn't catch them this time. But they've bee dating with a lady called Jessica, a 75 years old woman he met at a hospital. He likes them hip metallic.",
-    "jobless":  "Turns out they've spent three weeks jobless, he's been going to local restaurant trashcan to scavenge for some food, he even befriended a local racoon around there, he calls him Jeff.",
-    "debt":     "You didn't catch them this time. But they've been betting on a horse called 'The Disabled One' which runs on 3 legs and is blind, he lost 10,000 dollars on it. His blind and deaf friend recommended him this. "
-                "called The Disabled One, who's run on three legs since birth...",
-    "surprise": "You didn't catch them this time, but they've been planning to propose you for a while now. They are just not knowledgeable at all, so they have to ask friends for advices making it seems like they were going out.",
-    "none":     "Nothing happened, you are just paranoid. Stop overthinking so much and trust people more alright? The world is not that bad of a place.",
-}
+
 def play():
     #keeps starting new games until the player goes back to the menu
     while True:
@@ -1002,9 +1070,6 @@ def play():
         try:
             found = act_one(secret)
             won = act_two(secret, found)
-            if not won:
-                press_on(EMPTY_DOORWAY,
-                [[("EPILOGUE", GOLD)]] + wrap(EPILOGUES[secret]))
         except BackToMenu:
             return
 
@@ -1028,7 +1093,8 @@ def main():
                 play()
             elif key == "q":
                 break
-        pass
+    except KeyboardInterrupt:
+        pass   #Ctrl+C or Q on the size screen: quit cleanly
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         sys.stdout.write(RESET + CLEAR + SHOW_CURSOR)
