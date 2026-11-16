@@ -7,11 +7,17 @@ Subclass: D
 Container version: Debian Linux 12 (Bookworm) (The provided docker container)
 Run command:
 *You must have a docker desktop running.*
+
 1.Download the zip file
+
 2.Go to the directory via terminal, or preferably, open the folder in Visual Studio Code and open the terminal.
+
 3.Run "docker compose build" (only required on the first time)
+
 4.Run "docker compose run --rm game bash"
+
 5.Run "python main.py"
+
 Tests and known limitations: 
 
 Test: 
